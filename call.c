@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
-
+#include <errno.h>
 /*
  * bluetooth handsfree profile helpers
  */
@@ -237,31 +237,31 @@ static int sco_connect(bdaddr_t src, bdaddr_t dst)
 
 int rfcomm_connect(char dest[18])
 {
-    struct sockaddr_rc addr = { 0 };
-    int s, status;
-    // char dest[18];
-    // dest = d; //"01:23:45:67:89:AB";
-
-    // allocate a socket
-    s = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
-
-    // set the connection parameters (who to connect to)
-    addr.rc_family = AF_BLUETOOTH;
-    addr.rc_channel = (uint8_t) 1;
-    str2ba( dest, &addr.rc_bdaddr );
-
-    // connect to server
-    status = connect(s, (struct sockaddr *)&addr, sizeof(addr));
-
-    // send a message
-    if (status == 0) {
-        status = write(s, "hello!", 6);
-    }
-
-    if (status < 0) perror("uh oh");
-
-    close(s);
-    return 0;
+	struct sockaddr_rc addr = { 0 };
+	int s, status;
+	// char dest[18];
+	// dest = d; //"01:23:45:67:89:AB";
+	
+	// allocate a socket
+	s = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+	
+	// set the connection parameters (who to connect to)
+	addr.rc_family = AF_BLUETOOTH;
+	addr.rc_channel = (uint8_t) 1;
+	str2ba( dest, &addr.rc_bdaddr );
+	
+	// connect to server
+	status = connect(s, (struct sockaddr *)&addr, sizeof(addr));
+	
+	// send a message
+	if (status == 0) {
+	    status = write(s, "hello!", 6);
+	}
+	
+	if (status < 0) perror("uh oh");
+	
+	close(s);
+	return 0;
 }
 
 
@@ -322,68 +322,71 @@ int rfcomm_connect(char dest[18])
 //}
 
 int main() {
+	printf("starting ...\n");
 
-  printf("starting ...\n");
+	// Get bluetooth device id
+	int device_id = hci_get_route(NULL); // Passing NULL argument will retrieve the id of first avalaibe device
+	if (device_id < 0) {
+		printf("Error: Bluetooth device not found");
+		return 1;
+	}
 
-  // Get bluetooth device id
-  int device_id = hci_get_route(NULL); // Passing NULL argument will retrieve the id of first avalaibe device
-  if (device_id < 0) {
-    printf("Error: Bluetooth device not found");
-    return 1;
-  }
+	// Find nearby devices
+	int len     = 8;                 // Search time = 1.28 * len seconds
+	int max_rsp = 255;               // Return maximum max_rsp devices
+	int flags   = IREQ_CACHE_FLUSH;  // Flush out the cache of previously detected devices.
+	inquiry_info* i_infs = (inquiry_info*) malloc(max_rsp * sizeof(inquiry_info));
+	int num_rsp = hci_inquiry(device_id, len, max_rsp, NULL, &i_infs, flags); // search
+	if (num_rsp < 0) {
+		printf("Error: the hci_inquiry fails");
+		exit(1);
+	}
+	printf("Found %d device\n", num_rsp);
 
-  // Find nearby devices
-  int len     = 8;                 // Search time = 1.28 * len seconds
-  int max_rsp = 255;               // Return maximum max_rsp devices
-  int flags   = IREQ_CACHE_FLUSH;  // Flush out the cache of previously detected devices.
-  inquiry_info* i_infs = (inquiry_info*) malloc(max_rsp * sizeof(inquiry_info));
-  int num_rsp = hci_inquiry(device_id, len, max_rsp, NULL, &i_infs, flags); // search
-  if (num_rsp < 0) {
-    printf("Error: the hci_inquiry fails");
-    exit(1);
-  }
-  printf("Found %d device\n", num_rsp);
+	// Open socket
+	int socket = hci_open_dev(device_id);
+	if (socket < 0) {
+		printf("Error: Cannot open socket");
+		return 1;
+	}
 
-  // Open socket
-  int socket = hci_open_dev(device_id);
-  if (socket < 0) {
-    printf("Error: Cannot open socket");
-    return 1;
-  }
+	int i;
+	for (i = 0; i < num_rsp; i++) {
+		char device_address[20], device_name[300];
+		inquiry_info* current_device = i_infs + i;
+		// Get HEX address
+		ba2str(&(current_device->bdaddr), device_address);
+		// Clean previous name
+		memset(device_name, 0, sizeof(device_name));
+		// Get device name
+		if (hci_read_remote_name(socket, &(current_device->bdaddr), sizeof(device_name), device_name, 0) < 0) {
+			strcpy(device_name, "[unknown]"); // If cannot retrieve the name then set it "unknown"
+		}
+		// print address and name
+		printf("%s  %s\n", device_address, device_name);
+		uint16_t     handle;
+		unsigned int ptype      = HCI_DM1 | HCI_DM3 | HCI_DM5 | HCI_DH1 | HCI_DH3 | HCI_DH5;
+		// Establish HCI connection with device
+		if (hci_create_connection(socket, &(current_device->bdaddr), htobs(ptype), 0, 0, &handle, 0) < 0) {
+			printf("HCI create connection error (%s)\n", strerror(errno));
+			close(socket);
+		} else {
+			printf("Connection: OK\n");
+		}
+		// Authenticate HCI link (without pin)
+		if (hci_authenticate_link(socket, handle, 0) < 0) {
+			printf("HCI authenticate connection error (%s)\n", strerror(errno));
+			close(socket);
+		} else {
+			printf("Authentication: OK\n");
+		}
+	}
 
-  int i;
-  for (i = 0; i < num_rsp; i++) {
-    char device_address[20], device_name[300];
-    inquiry_info* current_device = i_infs + i;
-    // Get HEX address
-    ba2str(&(current_device->bdaddr), device_address);
-    // Clean previous name
-    memset(device_name, 0, sizeof(device_name));
-    // Get device name
-    if (hci_read_remote_name(socket, &(current_device->bdaddr), sizeof(device_name), device_name, 0) < 0) {
-        strcpy(device_name, "[unknown]"); // If cannot retrieve the name then set it "unknown"
-    }
-    // print address and name
-    printf("%s  %s\n", device_address, device_name);
+	// Close the socket
+	close(socket);
 
-        uint16_t     handle;
-	    unsigned int ptype      = HCI_DM1 | HCI_DM3 | HCI_DM5 | HCI_DH1 | HCI_DH3 | HCI_DH5;
-    // Establish HCI connection with device
-    if (hci_create_connection(socket, &(current_device->bdaddr), htobs(ptype), 0, 0, &handle, 0) < 0) {
-        printf("HCI create connection error\n");
-        close(socket);
-    } else {
-        printf("Connection: OK\n");
+	// Remove allocated memory
+	free(i_infs);
 
-    }
-
-  }
-
-  // Close the socket
-  close(socket);
-
-  // Remove allocated memory
-  free(i_infs);
-
-  return 0;
+	return 0;
 }
