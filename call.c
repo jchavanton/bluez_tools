@@ -364,6 +364,9 @@ int main() {
 		}
 		// print address and name
 		printf("%s  %s\n", device_address, device_name);
+		if (strcmp(device_name, "Julien's S10+") != 0){
+			continue;
+		}
 		uint16_t     handle;
 		unsigned int ptype      = HCI_DM1 | HCI_DM3 | HCI_DM5 | HCI_DH1 | HCI_DH3 | HCI_DH5;
 		// Establish HCI connection with device
@@ -380,7 +383,16 @@ int main() {
 		} else {
 			printf("Authentication: OK\n");
 		}
+
+		// hci_encrypt_link
 	}
+/* * * *
+starting ...
+Found 1 device
+6C:00:6B:E2:3B:18  Julien's S10+
+Connection: OK
+HCI authenticate connection error (Input/output error)
+* * * */
 
 	// Close the socket
 	close(socket);
